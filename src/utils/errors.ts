@@ -64,8 +64,30 @@ export class AppError extends Error {
  * Classify an error and create an AppError
  */
 export function classifyError(error: any, context?: Record<string, any>): AppError {
-  // If it's already an AppError, return it
+  // If it's already an AppError, check if we can extract more details from originalError
   if (error instanceof AppError) {
+    // If it has an originalError with response data, try to re-classify for better details
+    if (error.originalError && error.originalError.response) {
+      const original = error.originalError;
+      const status = original.response.status || original.response.statusCode;
+      const data = original.response.data;
+
+      // Re-classify validation errors to get better message
+      if (status === 400 || status === 422) {
+        return new AppError({
+          type: ErrorType.VALIDATION_ERROR,
+          message: `Validation error: ${data?.error?.detail || JSON.stringify(data)}`,
+          retryable: false,
+          httpStatus: status,
+          context: {
+            ...error.context,
+            ...context,
+            validationErrors: data?.error?.detail,
+          },
+          originalError: original,
+        });
+      }
+    }
     return error;
   }
 

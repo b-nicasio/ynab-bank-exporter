@@ -17,6 +17,9 @@ export interface AccountsConfig {
     budgetId: string;
   };
   accountMappings: Record<string, AccountMapping>;
+  notifications?: {
+    email?: string; // Email address to send sync notifications to
+  };
 }
 
 export interface YNABConfig {
@@ -27,6 +30,16 @@ export interface YNABConfig {
 
 const ACCOUNTS_CONFIG_PATH = path.join(process.cwd(), 'accounts.json');
 const LEGACY_CONFIG_PATH = path.join(process.cwd(), 'ynab-config.json');
+
+/**
+ * Load full accounts configuration (includes notifications)
+ */
+export function loadAccountsConfig(): AccountsConfig {
+  if (fs.existsSync(ACCOUNTS_CONFIG_PATH)) {
+    return fs.readJsonSync(ACCOUNTS_CONFIG_PATH) as AccountsConfig;
+  }
+  throw new Error(`accounts.json not found at ${ACCOUNTS_CONFIG_PATH}`);
+}
 
 /**
  * Load YNAB configuration from accounts.json (preferred) or environment variables
@@ -122,6 +135,9 @@ export function createAccountsConfigTemplate(): void {
     ynab: {
       accessToken: 'YOUR_YNAB_PERSONAL_ACCESS_TOKEN',
       budgetId: 'YOUR_BUDGET_ID_OR_USE_default',
+    },
+    notifications: {
+      email: 'your-email@gmail.com', // Optional: Email to receive sync notifications
     },
     accountMappings: {
       '1610': {

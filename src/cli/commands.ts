@@ -7,11 +7,25 @@ import { subDays, format, parse, isBefore, isAfter } from 'date-fns';
 import { YNABClient } from '../ynab/client';
 import { loadYNABConfig } from '../config/ynab';
 import { classifyError, formatError, AppError, ErrorType } from '../utils/errors';
+import { sendSyncNotification, SyncSummary } from '../utils/notifications';
+import { loadAccountsConfig } from '../config/ynab';
 
 const gmail = new GmailClient();
 
-function buildGmailQuery(days: number): string {
-  const afterDate = format(subDays(new Date(), days), 'yyyy/MM/dd');
+function buildGmailQuery(days: number, minDate?: string): string {
+  let afterDate: string;
+
+  if (minDate) {
+    // Use the minimum date if provided, ensuring we don't go before it
+    const minDateObj = parse(minDate, 'yyyy-MM-dd', new Date());
+    const daysBackDate = subDays(new Date(), days);
+    // Use whichever is more recent (closer to today)
+    afterDate = isAfter(minDateObj, daysBackDate)
+      ? format(minDateObj, 'yyyy/MM/dd')
+      : format(daysBackDate, 'yyyy/MM/dd');
+  } else {
+    afterDate = format(subDays(new Date(), days), 'yyyy/MM/dd');
+  }
 
   // Collect all search terms from registered parsers
   const parsers = parserRegistry.getAllParsers();
@@ -54,9 +68,12 @@ export async function sync(options: { days?: number; minDate?: string } = {}) {
       lookbackDays = 30;
   }
 
-  const query = buildGmailQuery(lookbackDays);
+  const query = buildGmailQuery(lookbackDays, options.minDate);
 
   console.log(`Searching for emails with query: ${query}`);
+  if (options.minDate) {
+    console.log(`Note: Only processing transactions from ${options.minDate} onwards`);
+  }
   const messages = await gmail.listMessages(query);
   console.log(`Found ${messages.length} messages.`);
 
@@ -287,8 +304,45 @@ export async function sync(options: { days?: number; minDate?: string } = {}) {
             console.log(`    ${type}: ${count}`);
           });
         }
+
+        // Send email notification if configured
+        try {
+          const accountsConfig = loadAccountsConfig();
+          if (accountsConfig.notifications?.email) {
+            const summary: SyncSummary = {
+              processed: processedCount,
+              newTransactions: newCount,
+              errors: errorCount,
+              syncedToYNAB: syncedCount,
+              ynabErrors: errorCount,
+              errorBreakdown: Object.keys(errorBreakdown).length > 0 ? errorBreakdown : undefined,
+            };
+            await sendSyncNotification(summary, accountsConfig.notifications.email);
+          }
+        } catch (notifError: any) {
+          // Don't fail sync if notification fails
+          console.warn('Failed to send notification:', notifError.message);
+        }
       } else {
         console.log('No new transactions to sync to YNAB.');
+
+        // Send notification even if no new transactions (optional)
+        try {
+          const accountsConfig = loadAccountsConfig();
+          if (accountsConfig.notifications?.email) {
+            const summary: SyncSummary = {
+              processed: processedCount,
+              newTransactions: 0,
+              errors: errorCount,
+              syncedToYNAB: 0,
+              ynabErrors: 0,
+            };
+            await sendSyncNotification(summary, accountsConfig.notifications.email);
+          }
+        } catch (notifError: any) {
+          // Don't fail sync if notification fails
+          console.warn('Failed to send notification:', notifError.message);
+        }
       }
     } catch (error: any) {
       console.error('Failed to sync to YNAB:', error.message);
@@ -297,7 +351,7 @@ export async function sync(options: { days?: number; minDate?: string } = {}) {
   }
 }
 
-export async function dryRun(options: { days?: number }) {
+export async function dryRun(options: { days?: number; minDate?: string }) {
   try {
     await gmail.init();
   } catch (error: any) {
@@ -305,11 +359,17 @@ export async function dryRun(options: { days?: number }) {
     process.exit(1);
   }
   const days = options.days || 30;
-  const query = buildGmailQuery(days);
+  const query = buildGmailQuery(days, options.minDate);
 
   console.log(`[Dry Run] Searching for emails with query: ${query}`);
+  if (options.minDate) {
+    console.log(`[Dry Run] Note: Only showing transactions from ${options.minDate} onwards`);
+  }
   const messages = await gmail.listMessages(query);
   console.log(`Found ${messages.length} messages.`);
+
+  let shownCount = 0;
+  let skippedCount = 0;
 
   for (const msgSummary of messages) {
      const fullMsg = await gmail.getMessage(msgSummary.id!);
@@ -319,8 +379,19 @@ export async function dryRun(options: { days?: number }) {
      if (parser) {
          const t = parser.parse(fullMsg);
          if (t) {
+             // Filter by minimum date if specified
+             if (options.minDate) {
+               const minDate = parse(options.minDate, 'yyyy-MM-dd', new Date());
+               const txDate = parse(t.date, 'yyyy-MM-dd', new Date());
+               if (isBefore(txDate, minDate)) {
+                 skippedCount++;
+                 continue;
+               }
+             }
+
              const n = rulesEngine.apply(t);
-             console.log(`[MATCH] ${parser.name}: ${n.date} - ${n.payee} - ${n.currency} ${n.amount}`);
+             console.log(`[MATCH] ${parser.name}: ${n.date} - ${n.payee} - ${n.currency} ${n.amount} (Account: ${n.account || 'N/A'})`);
+             shownCount++;
          } else {
              console.log(`[FAIL] ${parser.name} could not parse: ${fullMsg.subject}`);
              // debug
@@ -334,6 +405,8 @@ export async function dryRun(options: { days?: number }) {
          console.log(`[SKIP] No parser for: ${fullMsg.subject} (From: ${fullMsg.from})`);
      }
   }
+
+  console.log(`\n[Dry Run] Summary: ${shownCount} transactions shown, ${skippedCount} skipped (before minDate)`);
 }
 
 export async function setupYNAB() {
@@ -394,6 +467,14 @@ export async function listYNABAccounts() {
   }
 }
 
+/**
+ * Create a test transaction in YNAB
+ *
+ * IMPORTANT: Test transactions are NOT saved to the local database.
+ * They are sent directly to YNAB only, for testing purposes.
+ *
+ * @param options Transaction options
+ */
 export async function testTransaction(options: { account?: string; amount?: number; direction?: 'inflow' | 'outflow'; payee?: string }) {
   try {
     const ynabConfig = loadYNABConfig();
@@ -417,9 +498,10 @@ export async function testTransaction(options: { account?: string; amount?: numb
     }
 
     // Create a test transaction
+    // NOTE: This transaction is NOT saved to the database - it goes directly to YNAB
     const testTransaction: Transaction = {
       id: `test-${Date.now()}`,
-      bank: 'TEST',
+      bank: 'TEST', // Marked as TEST to distinguish from real transactions
       account: bankAccount,
       date: format(new Date(), 'yyyy-MM-dd'),
       payee: payee,

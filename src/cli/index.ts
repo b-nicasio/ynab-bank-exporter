@@ -33,8 +33,12 @@ program.command('sync')
 program.command('dry-run')
   .description('Simulate sync without saving')
   .option('-d, --days <number>', 'Number of days to look back', '30')
+  .option('--min-date <date>', 'Minimum date to process transactions (YYYY-MM-DD format, e.g., 2026-01-01)')
   .action(async (options) => {
-    await dryRun({ days: parseInt(options.days) });
+    await dryRun({
+      days: parseInt(options.days),
+      minDate: options.minDate
+    });
   });
 
 program.command('setup-ynab')

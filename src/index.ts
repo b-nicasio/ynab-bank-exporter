@@ -6,6 +6,7 @@ export * from './rules/engine';
 export * from './ynab/client';
 export {
   loadYNABConfig,
+  loadAccountsConfig,
   createYNABConfigTemplate,
   createAccountsConfigTemplate,
   type YNABConfig,

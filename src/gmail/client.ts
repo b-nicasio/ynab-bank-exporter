@@ -101,5 +101,77 @@ export class GmailClient {
       return null;
     }
   }
+
+  /**
+   * Encode email subject for RFC 2047 (handles UTF-8 characters like emojis)
+   */
+  private encodeSubject(subject: string): string {
+    // Check if subject contains non-ASCII characters
+    const hasNonASCII = /[^\x00-\x7F]/.test(subject);
+
+    if (!hasNonASCII) {
+      return subject;
+    }
+
+    // Encode using RFC 2047 Base64 encoding
+    // Format: =?UTF-8?B?<base64>?=
+    const encoded = Buffer.from(subject, 'utf-8')
+      .toString('base64')
+      .replace(/\n/g, '');
+
+    // Split into chunks of 75 characters (RFC 2047 limit per line)
+    const chunks: string[] = [];
+    for (let i = 0; i < encoded.length; i += 75) {
+      chunks.push(encoded.substring(i, i + 75));
+    }
+
+    return chunks.map(chunk => `=?UTF-8?B?${chunk}?=`).join('\r\n ');
+  }
+
+  /**
+   * Send an email using Gmail API
+   */
+  async sendEmail(options: {
+    to: string;
+    subject: string;
+    body: string;
+    htmlBody?: string;
+  }): Promise<string | null> {
+    if (!this.gmail) await this.init();
+
+    try {
+      // Create email message in RFC 5322 format
+      const encodedSubject = this.encodeSubject(options.subject);
+      const messageParts = [
+        `To: ${options.to}`,
+        `Subject: ${encodedSubject}`,
+        'MIME-Version: 1.0',
+        'Content-Type: text/html; charset=utf-8',
+        '',
+        options.htmlBody || options.body,
+      ];
+
+      const message = messageParts.join('\r\n');
+
+      // Encode message in base64url format (RFC 4648) as required by Gmail API
+      const encodedMessage = Buffer.from(message)
+        .toString('base64')
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/, '');
+
+      const res = await this.gmail!.users.messages.send({
+        userId: 'me',
+        requestBody: {
+          raw: encodedMessage,
+        },
+      });
+
+      return res.data.id || null;
+    } catch (error) {
+      console.error('Failed to send email:', error);
+      return null;
+    }
+  }
 }
 

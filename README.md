@@ -15,6 +15,7 @@ A Node.js application that runs as a daily cronjob to automatically scan your Gm
 - **Rules Engine**: Normalize payees (e.g., "MCDONALDS NUNEZ DE C" -> "McDonald's") via `rules.json`
 - **YNAB Integration**: Automatically creates transactions in YNAB via API
 - **Error Handling**: Tracks sync failures and allows retry
+- **Email Notifications**: Sends email summaries after each sync (optional)
 
 ## Setup
 
@@ -91,6 +92,9 @@ Edit `accounts.json` with your values:
     "accessToken": "YOUR_YNAB_PERSONAL_ACCESS_TOKEN",
     "budgetId": "your-budget-id-here"
   },
+  "notifications": {
+    "email": "your-email@gmail.com"
+  },
   "accountMappings": {
     "1610": {
       "ynabAccountId": "ynab-account-id-for-1610",
@@ -108,7 +112,15 @@ Edit `accounts.json` with your values:
 
 **Account Mappings**: Map your bank account numbers (last 4 digits) to YNAB account IDs. The app uses these mappings to determine which YNAB account to create transactions in.
 
+**Email Notifications** (optional): Add a `notifications.email` field to receive email summaries after each sync. The email will include:
+- Number of emails processed
+- New transactions found
+- Successfully synced transactions
+- Any errors encountered
+
 **Note**: Environment variables (`.env`) are also supported as an alternative, but `accounts.json` is the recommended method for easier management. See `.env.example` for environment variable format.
+
+**Important**: To send emails, you'll need to re-authorize Gmail with the new send permission. Delete `token.json` and run `npm start sync` again to grant the additional permission.
 
 ## Usage
 

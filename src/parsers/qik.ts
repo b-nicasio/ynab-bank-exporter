@@ -47,21 +47,35 @@ export class QIKParser implements Parser {
 
     // Extract payee (Localidad)
     // Format: "Localidad: RD VIAL APP" or "en RD VIAL APP"
+    // Important: Only capture up to 200 characters to avoid YNAB validation errors
     let payee = '';
-    const localidadMatch = cleanText.match(/Localidad:\s*([^\n\r]+)/i) ||
-                          cleanText.match(/en\s+([A-Z][A-Z\s]+(?:APP|STORE|MARKET|SUPER|GAS|RESTAURANT|CAFE|HOTEL|MALL|CENTER|PLAZA|SHOP|TIENDA|FARMACIA|BANCO|BANK)[^\n\r]*)/i) ||
-                          cleanText.match(/Se hizo una transacción.*?en\s+([A-Z][A-Z\s]+?)\s+con/i);
+
+    // Try to find "Localidad:" first (most reliable)
+    const localidadMatch = cleanText.match(/Localidad:\s*([^\n\r]{1,200}?)(?:\s+con\s+tu\s+tarjeta|$)/i);
 
     if (localidadMatch) {
       payee = localidadMatch[1].trim();
+      // Remove any trailing text that might have been captured
+      payee = payee.split(/\s+con\s+tu\s+tarjeta/i)[0].trim();
     } else {
-      // Fallback: try to extract from the main transaction text
-      const transactionMatch = cleanText.match(/transacción.*?en\s+([A-Z][A-Z\s]+?)\s+con/i);
-      if (transactionMatch) {
-        payee = transactionMatch[1].trim();
+      // Fallback: try to extract from "en [MERCHANT]"
+      const enMatch = cleanText.match(/en\s+([A-Z][A-Z\s]{1,100}?)(?:\s+con\s+tu\s+tarjeta|$)/i);
+      if (enMatch) {
+        payee = enMatch[1].trim();
       } else {
-        payee = 'QIK Transaction';
+        // Last resort: try to find merchant name before "con tu tarjeta"
+        const merchantMatch = cleanText.match(/([A-Z][A-Z\s]{1,100}?)\s+con\s+tu\s+tarjeta/i);
+        if (merchantMatch) {
+          payee = merchantMatch[1].trim();
+        } else {
+          payee = 'QIK Transaction';
+        }
       }
+    }
+
+    // Ensure payee doesn't exceed 200 characters (YNAB limit)
+    if (payee.length > 200) {
+      payee = payee.substring(0, 200).trim();
     }
 
     // Extract date

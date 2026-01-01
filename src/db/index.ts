@@ -29,10 +29,7 @@ export function initDB(): DatabaseType {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       ynab_transaction_id TEXT,
       ynab_synced_at DATETIME,
-      ynab_sync_error TEXT,
-      ynab_sync_error_type TEXT,
-      ynab_sync_retry_count INTEGER DEFAULT 0,
-      ynab_sync_last_retry DATETIME
+      ynab_sync_error TEXT
     );
 
     CREATE TABLE IF NOT EXISTS unparsed_messages (
@@ -46,9 +43,31 @@ export function initDB(): DatabaseType {
 
     CREATE INDEX IF NOT EXISTS idx_transactions_ynab_synced ON transactions(ynab_synced_at);
     CREATE INDEX IF NOT EXISTS idx_transactions_ynab_id ON transactions(ynab_transaction_id);
-    CREATE INDEX IF NOT EXISTS idx_transactions_ynab_error ON transactions(ynab_sync_error_type);
-    CREATE INDEX IF NOT EXISTS idx_transactions_ynab_retry ON transactions(ynab_sync_retry_count);
   `);
+
+  // Migration: Add new error tracking columns if they don't exist
+  try {
+    db.exec(`
+      ALTER TABLE transactions ADD COLUMN ynab_sync_error_type TEXT;
+      ALTER TABLE transactions ADD COLUMN ynab_sync_retry_count INTEGER DEFAULT 0;
+      ALTER TABLE transactions ADD COLUMN ynab_sync_last_retry DATETIME;
+    `);
+  } catch (e: any) {
+    // Columns already exist, ignore error
+    if (!e.message.includes('duplicate column')) {
+      console.warn('Migration warning:', e.message);
+    }
+  }
+
+  // Create indexes for new columns
+  try {
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_transactions_ynab_error ON transactions(ynab_sync_error_type);
+      CREATE INDEX IF NOT EXISTS idx_transactions_ynab_retry ON transactions(ynab_sync_retry_count);
+    `);
+  } catch (e: any) {
+    // Indexes might already exist, ignore
+  }
 
   return db;
 }

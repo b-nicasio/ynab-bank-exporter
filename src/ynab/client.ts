@@ -43,11 +43,16 @@ export class YNABClient {
     const amount = this.toMilliunits(transaction.amount);
     const milliunitAmount = transaction.direction === 'outflow' ? -amount : amount;
 
+    // Truncate payee name to YNAB's maximum of 200 characters
+    const payeeName = transaction.payee && transaction.payee.length > 200
+      ? transaction.payee.substring(0, 200)
+      : transaction.payee;
+
     const ynabTransaction: SaveTransactionWithOptionalFields = {
       account_id: accountId,
       date: transaction.date, // YYYY-MM-DD format
       amount: milliunitAmount,
-      payee_name: transaction.payee,
+      payee_name: payeeName,
       memo: transaction.memo || undefined,
       cleared: TransactionClearedStatus.Cleared,
       approved: true,
@@ -106,15 +111,22 @@ export class YNABClient {
 
     // Create transactions in batches per account
     for (const [accountId, accountTransactions] of Object.entries(byAccount)) {
-      const ynabTransactions: SaveTransactionWithOptionalFields[] = accountTransactions.map(t => ({
-        account_id: accountId,
-        date: t.date,
-        amount: t.direction === 'outflow' ? -this.toMilliunits(t.amount) : this.toMilliunits(t.amount),
-        payee_name: t.payee,
-        memo: t.memo || undefined,
-        cleared: TransactionClearedStatus.Cleared,
-        approved: true,
-      }));
+      const ynabTransactions: SaveTransactionWithOptionalFields[] = accountTransactions.map(t => {
+        // Truncate payee name to YNAB's maximum of 200 characters
+        const payeeName = t.payee && t.payee.length > 200
+          ? t.payee.substring(0, 200)
+          : t.payee;
+
+        return {
+          account_id: accountId,
+          date: t.date,
+          amount: t.direction === 'outflow' ? -this.toMilliunits(t.amount) : this.toMilliunits(t.amount),
+          payee_name: payeeName,
+          memo: t.memo || undefined,
+          cleared: TransactionClearedStatus.Cleared,
+          approved: true,
+        };
+      });
 
       try {
         const response = await retryWithBackoff(
@@ -146,13 +158,36 @@ export class YNABClient {
           console.log(`Skipped ${response.data.duplicate_import_ids.length} duplicate transactions`);
         }
       } catch (error: any) {
+        // Log the full error details for debugging
+        console.error(`Failed to create batch transactions for account ${accountId}:`);
+
+        // Extract error details from various possible formats
+        let errorDetail = '';
+        if (error.response?.data?.error?.detail) {
+          errorDetail = error.response.data.error.detail;
+        } else if (error.originalError?.response?.data?.error?.detail) {
+          errorDetail = error.originalError.response.data.error.detail;
+        } else if (error.response?.data) {
+          errorDetail = JSON.stringify(error.response.data);
+        }
+
+        if (errorDetail) {
+          console.error(`  YNAB Error Detail: ${errorDetail}`);
+        }
+
+        if (error.response) {
+          console.error(`  Response status:`, error.response.status);
+        }
+        if (error.message) {
+          console.error(`  Error message:`, error.message);
+        }
+
         const appError = classifyError(error, {
           accountId,
           transactionCount: accountTransactions.length,
         });
 
-        console.error(`Failed to create batch transactions for account ${accountId}:`);
-        console.error(`  Error: ${formatError(appError)}`);
+        console.error(`  Classified error: ${formatError(appError)}`);
 
         // For retryable errors, we'll mark individual transactions for retry
         // For non-retryable errors, mark them as failed
