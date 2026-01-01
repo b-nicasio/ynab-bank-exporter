@@ -40,4 +40,3 @@ RUN mkdir -p /app/logs
 
 # Start cron in foreground and keep container running
 CMD ["sh", "-c", "cron && tail -f /dev/null"]
-

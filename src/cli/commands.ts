@@ -6,6 +6,7 @@ import { Transaction } from '../types';
 import { subDays, format, parse, isBefore, isAfter } from 'date-fns';
 import { YNABClient } from '../ynab/client';
 import { loadYNABConfig } from '../config/ynab';
+import { classifyError, formatError, AppError, ErrorType } from '../utils/errors';
 
 const gmail = new GmailClient();
 
@@ -66,13 +67,21 @@ export async function sync(options: { days?: number; minDate?: string } = {}) {
 
   const updateYNABSync = db.prepare(`
     UPDATE transactions
-    SET ynab_transaction_id = @ynabId, ynab_synced_at = CURRENT_TIMESTAMP, ynab_sync_error = NULL
+    SET ynab_transaction_id = @ynabId,
+        ynab_synced_at = CURRENT_TIMESTAMP,
+        ynab_sync_error = NULL,
+        ynab_sync_error_type = NULL,
+        ynab_sync_retry_count = 0
     WHERE id = @id
   `);
 
   const updateYNABError = db.prepare(`
     UPDATE transactions
-    SET ynab_sync_error = @error, ynab_synced_at = CURRENT_TIMESTAMP
+    SET ynab_sync_error = @error,
+        ynab_sync_error_type = @errorType,
+        ynab_sync_retry_count = COALESCE(ynab_sync_retry_count, 0) + 1,
+        ynab_sync_last_retry = CURRENT_TIMESTAMP,
+        ynab_synced_at = CURRENT_TIMESTAMP
     WHERE id = @id
   `);
 
@@ -126,8 +135,14 @@ export async function sync(options: { days?: number; minDate?: string } = {}) {
             }
             insertProcessed.run(fullMsg.id);
             processedCount++;
-        } catch (e) {
-            console.error(`Error saving transaction ${normalized.id}:`, e);
+        } catch (e: any) {
+            const error = classifyError(e, {
+              transactionId: normalized.id,
+              payee: normalized.payee,
+              amount: normalized.amount,
+            });
+            console.error(`Error saving transaction ${normalized.id}:`, formatError(error));
+            errorCount++;
         }
       } else {
          insertUnparsed.run({
@@ -184,10 +199,47 @@ export async function sync(options: { days?: number; minDate?: string } = {}) {
       if (unsynced.length > 0) {
         console.log(`Found ${unsynced.length} unsynced transactions. Syncing to YNAB...`);
 
-        const syncResults = await ynabClient.createTransactions(unsynced);
+        let syncResults: Map<string, string>;
+        let syncErrors: Map<string, AppError> = new Map();
+
+        try {
+          syncResults = await ynabClient.createTransactions(unsynced);
+        } catch (error: any) {
+          const appError = classifyError(error, {
+            transactionCount: unsynced.length,
+          });
+
+          // If it's a batch error, try individual transactions
+          if (appError.retryable && unsynced.length > 1) {
+            console.warn('Batch sync failed, attempting individual transactions...');
+            syncResults = new Map();
+
+            for (const transaction of unsynced) {
+              try {
+                const ynabId = await ynabClient.createTransaction(transaction);
+                if (ynabId) {
+                  syncResults.set(transaction.id, ynabId);
+                }
+              } catch (txError: any) {
+                const txAppError = classifyError(txError, {
+                  transactionId: transaction.id,
+                  payee: transaction.payee,
+                });
+                syncErrors.set(transaction.id, txAppError);
+              }
+            }
+          } else {
+            // Non-retryable error or single transaction - mark all as failed
+            unsynced.forEach(tx => {
+              syncErrors.set(tx.id, appError);
+            });
+            syncResults = new Map();
+          }
+        }
 
         let syncedCount = 0;
         let errorCount = 0;
+        const errorBreakdown: Record<string, number> = {};
 
         for (const transaction of unsynced) {
           const ynabId = syncResults.get(transaction.id);
@@ -195,15 +247,33 @@ export async function sync(options: { days?: number; minDate?: string } = {}) {
             updateYNABSync.run({ id: transaction.id, ynabId });
             syncedCount++;
           } else {
-            // Transaction might have failed or been skipped
-            // Check if it's in the account mappings
-            const accountId = ynabConfig.accountMappings[transaction.account || ''];
-            if (!accountId) {
+            // Check if we have an error for this transaction
+            const error = syncErrors.get(transaction.id);
+
+            if (error) {
               updateYNABError.run({
                 id: transaction.id,
-                error: `No YNAB account mapping for bank account: ${transaction.account}`
+                error: formatError(error),
+                errorType: error.type,
               });
+              errorBreakdown[error.type] = (errorBreakdown[error.type] || 0) + 1;
               errorCount++;
+            } else {
+              // Check if it's missing account mapping
+              const accountId = ynabConfig.accountMappings[transaction.account || ''];
+              if (!accountId) {
+                const mappingError = classifyError(
+                  new Error(`No YNAB account mapping for bank account: ${transaction.account}`),
+                  { account: transaction.account }
+                );
+                updateYNABError.run({
+                  id: transaction.id,
+                  error: mappingError.message,
+                  errorType: ErrorType.CONFIGURATION_ERROR,
+                });
+                errorBreakdown[ErrorType.CONFIGURATION_ERROR] = (errorBreakdown[ErrorType.CONFIGURATION_ERROR] || 0) + 1;
+                errorCount++;
+              }
             }
           }
         }
@@ -211,6 +281,12 @@ export async function sync(options: { days?: number; minDate?: string } = {}) {
         console.log(`YNAB Sync complete:`);
         console.log(`  Synced: ${syncedCount}`);
         console.log(`  Errors: ${errorCount}`);
+        if (errorCount > 0 && Object.keys(errorBreakdown).length > 0) {
+          console.log(`  Error breakdown:`);
+          Object.entries(errorBreakdown).forEach(([type, count]) => {
+            console.log(`    ${type}: ${count}`);
+          });
+        }
       } else {
         console.log('No new transactions to sync to YNAB.');
       }
@@ -362,19 +438,33 @@ export async function testTransaction(options: { account?: string; amount?: numb
     console.log(`  Payee: ${payee}`);
     console.log(`  Date: ${testTransaction.date}`);
 
-    const ynabTransactionId = await ynabClient.createTransaction(testTransaction);
+    try {
+      const ynabTransactionId = await ynabClient.createTransaction(testTransaction);
 
-    if (ynabTransactionId) {
-      console.log(`\n✅ Successfully created test transaction in YNAB!`);
-      console.log(`   YNAB Transaction ID: ${ynabTransactionId}`);
-      console.log(`\nYou can verify this transaction in your YNAB app.`);
-    } else {
-      console.error('\n❌ Failed to create transaction (no transaction ID returned)');
+      if (ynabTransactionId) {
+        console.log(`\n✅ Successfully created test transaction in YNAB!`);
+        console.log(`   YNAB Transaction ID: ${ynabTransactionId}`);
+        console.log(`\nYou can verify this transaction in your YNAB app.`);
+      } else {
+        console.error('\n❌ Failed to create transaction (no transaction ID returned)');
+      }
+    } catch (error: any) {
+      const appError = classifyError(error, {
+        account: bankAccount,
+        amount: amount,
+        payee: payee,
+      });
+      console.error('\n❌ Failed to create test transaction:', formatError(appError));
+      if (appError.context) {
+        console.error('Context:', JSON.stringify(appError.context, null, 2));
+      }
+      throw appError;
     }
   } catch (error: any) {
-    console.error('\n❌ Failed to create test transaction:', error.message);
-    if (error.response?.data) {
-      console.error('YNAB API Error:', JSON.stringify(error.response.data, null, 2));
+    const appError = classifyError(error);
+    console.error('\n❌ Failed to create test transaction:', formatError(appError));
+    if (appError.context) {
+      console.error('Context:', JSON.stringify(appError.context, null, 2));
     }
   }
 }
@@ -392,13 +482,21 @@ export async function retryYNABSync() {
 
     const updateYNABSyncRetry = db.prepare(`
       UPDATE transactions
-      SET ynab_transaction_id = @ynabId, ynab_synced_at = CURRENT_TIMESTAMP, ynab_sync_error = NULL
+      SET ynab_transaction_id = @ynabId,
+          ynab_synced_at = CURRENT_TIMESTAMP,
+          ynab_sync_error = NULL,
+          ynab_sync_error_type = NULL,
+          ynab_sync_retry_count = 0
       WHERE id = @id
     `);
 
     const updateYNABErrorRetry = db.prepare(`
       UPDATE transactions
-      SET ynab_sync_error = @error, ynab_synced_at = CURRENT_TIMESTAMP
+      SET ynab_sync_error = @error,
+          ynab_sync_error_type = @errorType,
+          ynab_sync_retry_count = COALESCE(ynab_sync_retry_count, 0) + 1,
+          ynab_sync_last_retry = CURRENT_TIMESTAMP,
+          ynab_synced_at = CURRENT_TIMESTAMP
       WHERE id = @id
     `);
 
@@ -411,10 +509,47 @@ export async function retryYNABSync() {
 
     console.log(`Found ${failed.length} transactions to retry syncing to YNAB...`);
 
-    const syncResults = await ynabClient.createTransactions(failed);
+    let syncResults: Map<string, string>;
+    let syncErrors: Map<string, AppError> = new Map();
+
+    try {
+      syncResults = await ynabClient.createTransactions(failed);
+    } catch (error: any) {
+      const appError = classifyError(error, {
+        transactionCount: failed.length,
+      });
+
+      // If batch fails and error is retryable, try individual transactions
+      if (appError.retryable && failed.length > 1) {
+        console.warn('Batch retry failed, attempting individual transactions...');
+        syncResults = new Map();
+
+        for (const transaction of failed) {
+          try {
+            const ynabId = await ynabClient.createTransaction(transaction);
+            if (ynabId) {
+              syncResults.set(transaction.id, ynabId);
+            }
+          } catch (txError: any) {
+            const txAppError = classifyError(txError, {
+              transactionId: transaction.id,
+              payee: transaction.payee,
+            });
+            syncErrors.set(transaction.id, txAppError);
+          }
+        }
+      } else {
+        // Non-retryable error - mark all as failed
+        failed.forEach(tx => {
+          syncErrors.set(tx.id, appError);
+        });
+        syncResults = new Map();
+      }
+    }
 
     let syncedCount = 0;
     let stillFailed = 0;
+    const errorBreakdown: Record<string, number> = {};
 
     for (const transaction of failed) {
       const ynabId = syncResults.get(transaction.id);
@@ -422,13 +557,32 @@ export async function retryYNABSync() {
         updateYNABSyncRetry.run({ id: transaction.id, ynabId });
         syncedCount++;
       } else {
-        const accountId = ynabConfig.accountMappings[transaction.account || ''];
-        if (!accountId) {
+        const error = syncErrors.get(transaction.id);
+
+        if (error) {
           updateYNABErrorRetry.run({
             id: transaction.id,
-            error: `No YNAB account mapping for bank account: ${transaction.account}`
+            error: formatError(error),
+            errorType: error.type,
           });
+          errorBreakdown[error.type] = (errorBreakdown[error.type] || 0) + 1;
           stillFailed++;
+        } else {
+          // Check for missing account mapping
+          const accountId = ynabConfig.accountMappings[transaction.account || ''];
+          if (!accountId) {
+            const mappingError = classifyError(
+              new Error(`No YNAB account mapping for bank account: ${transaction.account}`),
+              { account: transaction.account }
+            );
+            updateYNABErrorRetry.run({
+              id: transaction.id,
+              error: mappingError.message,
+              errorType: ErrorType.CONFIGURATION_ERROR,
+            });
+            errorBreakdown[ErrorType.CONFIGURATION_ERROR] = (errorBreakdown[ErrorType.CONFIGURATION_ERROR] || 0) + 1;
+            stillFailed++;
+          }
         }
       }
     }
@@ -436,8 +590,18 @@ export async function retryYNABSync() {
     console.log(`Retry complete:`);
     console.log(`  Synced: ${syncedCount}`);
     console.log(`  Still failed: ${stillFailed}`);
+    if (stillFailed > 0 && Object.keys(errorBreakdown).length > 0) {
+      console.log(`  Error breakdown:`);
+      Object.entries(errorBreakdown).forEach(([type, count]) => {
+        console.log(`    ${type}: ${count}`);
+      });
+    }
   } catch (error: any) {
-    console.error('Failed to retry YNAB sync:', error.message);
+    const appError = classifyError(error);
+    console.error('Failed to retry YNAB sync:', formatError(appError));
+    if (appError.context) {
+      console.error('Context:', JSON.stringify(appError.context, null, 2));
+    }
   }
 }
 

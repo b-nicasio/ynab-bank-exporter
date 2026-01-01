@@ -1,6 +1,7 @@
 import { API, SaveTransactionWithOptionalFields, TransactionClearedStatus, BudgetSummary, Account } from 'ynab';
 import { Transaction } from '../types';
 import { YNABConfig } from '../config/ynab';
+import { classifyError, retryWithBackoff, formatError, AppError, ErrorType } from '../utils/errors';
 
 export class YNABClient {
   private api: API;
@@ -53,9 +54,20 @@ export class YNABClient {
     };
 
     try {
-      const response = await this.api.transactions.createTransaction(
-        this.budgetId,
-        { transaction: ynabTransaction }
+      const response = await retryWithBackoff(
+        () => this.api.transactions.createTransaction(
+          this.budgetId,
+          { transaction: ynabTransaction }
+        ),
+        {
+          maxRetries: 3,
+          initialDelay: 1000,
+          onRetry: (error, attempt) => {
+            console.warn(
+              `Retrying transaction for ${transaction.payee} (attempt ${attempt}): ${error.message}`
+            );
+          },
+        }
       );
 
       if (response.data.transaction) {
@@ -64,11 +76,15 @@ export class YNABClient {
 
       return null;
     } catch (error: any) {
-      console.error(`Failed to create YNAB transaction for ${transaction.payee}:`, error.message);
-      if (error.response?.data) {
-        console.error('YNAB API Error:', JSON.stringify(error.response.data, null, 2));
-      }
-      throw error;
+      const appError = classifyError(error, {
+        transactionId: transaction.id,
+        payee: transaction.payee,
+        amount: transaction.amount,
+        account: transaction.account,
+      });
+
+      console.error(`Failed to create YNAB transaction for ${transaction.payee}:`, formatError(appError));
+      throw appError;
     }
   }
 
@@ -101,9 +117,20 @@ export class YNABClient {
       }));
 
       try {
-        const response = await this.api.transactions.createTransactions(
-          this.budgetId,
-          { transactions: ynabTransactions }
+        const response = await retryWithBackoff(
+          () => this.api.transactions.createTransactions(
+            this.budgetId,
+            { transactions: ynabTransactions }
+          ),
+          {
+            maxRetries: 3,
+            initialDelay: 1000,
+            onRetry: (error, attempt) => {
+              console.warn(
+                `Retrying batch transactions for account ${accountId} (attempt ${attempt}): ${error.message}`
+              );
+            },
+          }
         );
 
         if (response.data.transactions) {
@@ -119,11 +146,25 @@ export class YNABClient {
           console.log(`Skipped ${response.data.duplicate_import_ids.length} duplicate transactions`);
         }
       } catch (error: any) {
-        console.error(`Failed to create batch transactions for account ${accountId}:`, error.message);
-        if (error.response?.data) {
-          console.error('YNAB API Error:', JSON.stringify(error.response.data, null, 2));
+        const appError = classifyError(error, {
+          accountId,
+          transactionCount: accountTransactions.length,
+        });
+
+        console.error(`Failed to create batch transactions for account ${accountId}:`);
+        console.error(`  Error: ${formatError(appError)}`);
+
+        // For retryable errors, we'll mark individual transactions for retry
+        // For non-retryable errors, mark them as failed
+        if (!appError.retryable) {
+          // Store error info for each transaction in this batch
+          accountTransactions.forEach(tx => {
+            // We'll handle this in the calling code
+          });
         }
+
         // Continue with other accounts even if one fails
+        throw appError;
       }
     }
 

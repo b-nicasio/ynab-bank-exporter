@@ -29,7 +29,10 @@ export function initDB(): DatabaseType {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       ynab_transaction_id TEXT,
       ynab_synced_at DATETIME,
-      ynab_sync_error TEXT
+      ynab_sync_error TEXT,
+      ynab_sync_error_type TEXT,
+      ynab_sync_retry_count INTEGER DEFAULT 0,
+      ynab_sync_last_retry DATETIME
     );
 
     CREATE TABLE IF NOT EXISTS unparsed_messages (
@@ -43,6 +46,8 @@ export function initDB(): DatabaseType {
 
     CREATE INDEX IF NOT EXISTS idx_transactions_ynab_synced ON transactions(ynab_synced_at);
     CREATE INDEX IF NOT EXISTS idx_transactions_ynab_id ON transactions(ynab_transaction_id);
+    CREATE INDEX IF NOT EXISTS idx_transactions_ynab_error ON transactions(ynab_sync_error_type);
+    CREATE INDEX IF NOT EXISTS idx_transactions_ynab_retry ON transactions(ynab_sync_retry_count);
   `);
 
   return db;
