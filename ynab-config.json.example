@@ -1,0 +1,11 @@
+{
+  "accessToken": "YOUR_YNAB_PERSONAL_ACCESS_TOKEN",
+  "budgetId": "YOUR_BUDGET_ID_OR_USE_default",
+  "accountMappings": {
+    "1610": "YNAB_ACCOUNT_ID_FOR_1610",
+    "3709": "YNAB_ACCOUNT_ID_FOR_3709",
+    "0014": "YNAB_ACCOUNT_ID_FOR_0014",
+    "9508": "YNAB_ACCOUNT_ID_FOR_9508"
+  }
+}
+

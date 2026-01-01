@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Sensitive files - DO NOT COMMIT
+credentials.json
+token.json
+ynab-config.json
+accounts.json
+.env
+
+# Database
+data/
+
+# Logs
+logs/
+*.log
+
+# Exports (optional - you may want to keep these)
+exports/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+

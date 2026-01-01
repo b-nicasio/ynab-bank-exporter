@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  bank-sync:
+    build: .
+    container_name: bank-sync
+    restart: unless-stopped
+    volumes:
+      # Persist database and credentials
+      - ./data:/app/data
+      - ./credentials.json:/app/credentials.json:ro
+      - ./token.json:/app/token.json:ro
+      - ./accounts.json:/app/accounts.json:ro
+      - ./rules.json:/app/rules.json:ro
+      - ./logs:/app/logs
+    environment:
+      # Optional: Override with environment variables if needed
+      - TZ=America/Santo_Domingo
+    # Health check (optional)
+    # healthcheck:
+    #   test: ["CMD", "test", "-f", "/app/logs/sync.log"]
+    #   interval: 1h
+    #   timeout: 10s
+    #   retries: 3

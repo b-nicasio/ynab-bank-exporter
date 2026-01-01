@@ -1,0 +1,29 @@
+{
+  "ynab": {
+    "accessToken": "YOUR_YNAB_PERSONAL_ACCESS_TOKEN",
+    "budgetId": "YOUR_BUDGET_ID_OR_USE_default"
+  },
+  "accountMappings": {
+    "1610": {
+      "ynabAccountId": "ynab_account_id_for_1610",
+      "ynabAccountName": "Visa Mi País",
+      "description": "Visa Mi País credit card"
+    },
+    "3709": {
+      "ynabAccountId": "ynab_account_id_for_3709",
+      "ynabAccountName": "Visa Débito Oro",
+      "description": "Visa Débito Oro debit card"
+    },
+    "0014": {
+      "ynabAccountId": "ynab_account_id_for_0014",
+      "ynabAccountName": "Savings",
+      "description": "Savings account linked to 3709"
+    },
+    "9508": {
+      "ynabAccountId": "ynab_account_id_for_9508",
+      "ynabAccountName": "Visa Mi País Other",
+      "description": "Visa Mi País (Other)"
+    }
+  }
+}
+

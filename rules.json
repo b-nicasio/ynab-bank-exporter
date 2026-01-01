@@ -1,0 +1,49 @@
+{
+  "merchant_normalization": [
+    {
+      "match": "MCDONALDS",
+      "payee": "McDonald's",
+      "category": "Dining Out"
+    },
+    {
+      "match": "SM NACIONAL",
+      "payee": "Supermercados Nacional",
+      "category": "Groceries"
+    },
+    {
+      "match": "SIRENA",
+      "payee": "La Sirena",
+      "category": "Groceries"
+    },
+    {
+      "match": "AMAZON",
+      "payee": "Amazon",
+      "category": "Shopping"
+    },
+    {
+      "match": "UBER.*EATS",
+      "payee": "Uber Eats",
+      "category": "Dining Out"
+    },
+    {
+      "match": "UBER.*TRIP",
+      "payee": "Uber",
+      "category": "Transportation"
+    },
+    {
+      "match": "PEDIDOSYA",
+      "payee": "PedidosYa",
+      "category": "Dining Out"
+    },
+    {
+      "match": "NETFLIX",
+      "payee": "Netflix",
+      "category": "Subscriptions"
+    },
+    {
+      "match": "SPOTIFY",
+      "payee": "Spotify",
+      "category": "Subscriptions"
+    }
+  ]
+}

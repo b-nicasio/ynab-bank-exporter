@@ -1,0 +1,43 @@
+{
+  "name": "bank-csv-generator",
+  "version": "1.0.0",
+  "description": "",
+  "main": "dist/index.js",
+  "bin": {
+    "bank-sync": "./dist/cli/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/cli/index.js",
+    "test": "jest"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@types/node": "^25.0.3",
+    "better-sqlite3": "^12.5.0",
+    "cheerio": "^1.1.2",
+    "commander": "^14.0.2",
+    "date-fns": "^4.1.0",
+    "dotenv": "^17.2.3",
+    "fs-extra": "^11.3.3",
+    "google-auth-library": "^10.5.0",
+    "googleapis": "^169.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3",
+    "ynab": "^2.10.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/cheerio": "^0.22.35",
+    "@types/fs-extra": "^11.0.4",
+    "@types/jest": "^30.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.50.1",
+    "@typescript-eslint/parser": "^8.50.1",
+    "eslint": "^9.39.2",
+    "jest": "^30.2.0",
+    "ts-jest": "^29.4.6"
+  }
+}
