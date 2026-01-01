@@ -53,68 +53,62 @@ Copy the code from the browser and paste it into the terminal. A `token.json` fi
 
 ### 5. YNAB Configuration
 
-You can configure YNAB using either environment variables (recommended for production/cronjobs) or a JSON file.
+#### Step 1: Create Configuration Template
 
-#### Option A: Environment Variables (Recommended)
+```bash
+npm start setup-accounts
+```
 
-1. Copy the example environment file:
-   ```bash
-   cp .env.example .env
-   ```
+This creates an `accounts.json` template file.
 
-2. Get your YNAB Personal Access Token from [YNAB Developer Settings](https://app.ynab.com/settings/developer)
+#### Step 2: Get Your Budget ID
 
-3. Get your Budget ID:
-   ```bash
-   npm start list-budgets
-   ```
+List your available budgets:
 
-4. Get your Account IDs:
-   ```bash
-   npm start list-accounts
-   ```
+```bash
+npm start list-budgets
+```
 
-5. Edit `.env` with your values:
-   ```bash
-   YNAB_ACCESS_TOKEN=your_ynab_personal_access_token_here
-   YNAB_BUDGET_ID=your_budget_id_or_use_default
-   YNAB_ACCOUNT_MAPPINGS={"1610":"ynab_account_id_for_1610","3709":"ynab_account_id_for_3709","0014":"ynab_account_id_for_0014","9508":"ynab_account_id_for_9508"}
-   ```
+Copy the Budget ID you want to use (or use `"default"` if you've set a default budget in YNAB).
 
-#### Option B: JSON Configuration File
+#### Step 3: Get Your Account IDs
 
-1. Create configuration template:
-   ```bash
-   npm start setup-ynab
-   ```
+List accounts in your budget:
 
-2. Get your Budget ID:
-   ```bash
-   npm start list-budgets
-   ```
+```bash
+npm start list-accounts
+```
 
-3. Get your Account IDs:
-   ```bash
-   npm start list-accounts
-   ```
+Copy the Account IDs for each of your bank accounts.
 
-4. Edit `ynab-config.json` with your values:
-   ```json
-   {
-     "accessToken": "YOUR_YNAB_PERSONAL_ACCESS_TOKEN",
-     "budgetId": "your-budget-id-here",
-     "accountMappings": {
-       "1610": "ynab-account-id-for-1610",
-       "3709": "ynab-account-id-for-3709",
-       "0014": "ynab-account-id-for-0014",
-       "9508": "ynab-account-id-for-9508"
-     }
-   }
-   ```
+#### Step 4: Update Configuration
 
-**Note**: Environment variables take precedence over the JSON file if both are present.
+Edit `accounts.json` with your values:
+
+```json
+{
+  "ynab": {
+    "accessToken": "YOUR_YNAB_PERSONAL_ACCESS_TOKEN",
+    "budgetId": "your-budget-id-here"
+  },
+  "accountMappings": {
+    "1610": {
+      "ynabAccountId": "ynab-account-id-for-1610",
+      "ynabAccountName": "Visa Mi País",
+      "description": "Visa Mi País credit card"
+    },
+    "3709": {
+      "ynabAccountId": "ynab-account-id-for-3709",
+      "ynabAccountName": "Visa Débito Oro",
+      "description": "Visa Débito Oro debit card"
+    }
+  }
+}
+```
 
 **Account Mappings**: Map your bank account numbers (last 4 digits) to YNAB account IDs. The app uses these mappings to determine which YNAB account to create transactions in.
+
+**Note**: Environment variables (`.env`) are also supported as an alternative, but `accounts.json` is the recommended method for easier management. See `.env.example` for environment variable format.
 
 ## Usage
 
